@@ -1,0 +1,16 @@
+{
+  "name": "r3-webforms",
+  "private": true,
+  "workspaces": [
+    "apps/pams",
+    "apps/fgases",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:pams": "pnpm --filter @eea/pams dev",
+    "dev:fgases": "pnpm --filter @eea/fgases dev",
+    "build:pams": "pnpm --filter @eea/pams build",
+    "build:fgases": "pnpm --filter @eea/fgases build"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

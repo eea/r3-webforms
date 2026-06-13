@@ -6,6 +6,9 @@ govreg-annexi-webforms/
 node_modules/
 dist/
 
+# pnpm
+.pnpm-store/
+
 # .NET
 bin/
 obj/
