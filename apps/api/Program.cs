@@ -1,6 +1,7 @@
 using Api.Configuration;
 using Api.Hubs;
 using Api.Middleware;
+using Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,6 +43,19 @@ builder.Services.AddCors(options =>
               .AllowAnyMethod()
               .AllowCredentials());
 });
+
+// Locking
+builder.Services.AddSingleton<InMemoryLockService>();
+builder.Services.AddSingleton<ILockService>(sp => sp.GetRequiredService<InMemoryLockService>());
+builder.Services.AddHostedService<LockExpiryService>();
+
+// RN3 service (scoped: reads per-user token from session or Rn3TokenStore for background tasks)
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<Rn3TokenStore>();
+builder.Services.AddScoped<IRn3Service, Rn3Service>();
+builder.Services.AddScoped<IPullService, PullService>();
+builder.Services.AddScoped<IPushService, PushService>();
+builder.Services.AddScoped<IValidationService, ValidationService>();
 
 // Controllers + SignalR
 builder.Services.AddControllers();

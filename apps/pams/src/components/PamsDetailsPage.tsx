@@ -61,13 +61,13 @@ import ValidationWorkflow from './ValidationWorkflow';
 type PamsDetailsPageProps = {
   allTables: TableInfo[];
   hasData: boolean;
-  datasetId: number;
-  dataflowId: number;
+  datasetId?: number;
+  dataflowId?: number;
 };
 
 const PAMS_DRAFT_STORAGE_KEY = 'pams_details_draft_v1';
 
-function PamsDetailsPage({ allTables, hasData, datasetId, dataflowId }: PamsDetailsPageProps) {
+function PamsDetailsPage({ allTables, hasData }: PamsDetailsPageProps) {
   const [selectedPamId, setSelectedPamId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState(0);
 
@@ -958,9 +958,6 @@ function PamsDetailsPage({ allTables, hasData, datasetId, dataflowId }: PamsDeta
         <ValidationWorkflow
           open={dialogs.showValidation}
           onClose={() => dialogs.setShowValidation(false)}
-          datasetId={datasetId}
-          dataflowId={dataflowId}
-          allTables={allTables}
         />
       </Box>
     </LocalizationProvider>

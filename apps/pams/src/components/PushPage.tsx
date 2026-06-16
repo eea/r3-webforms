@@ -3,29 +3,27 @@ import {
   Box,
   Button,
   Chip,
-  Collapse,
-  Divider,
-  InputAdornment,
+  LinearProgress,
   Stack,
-  TextField,
   Typography,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined';
 import FolderZipOutlinedIcon from '@mui/icons-material/FolderZipOutlined';
-import SmartProgressBar from './SmartProgressBar';
-import {
-  type TableEntry,
-  type BuildProgress,
-  buildZip,
-  uploadAndPoll,
-} from './pushUtils';
+import { useAuth } from '../contexts/AuthContext';
+import { useSignalR } from '../contexts/SignalRContext';
+import { useWorkflowProgress } from '../hooks/useWorkflowProgress';
+import { clearDataset } from '../db';
+import { flattenRecord, recordsToCsv } from './pushUtils';
+import JSZip from 'jszip';
+import type { TableEntry } from './pushUtils';
+
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 type PushPageProps = {
   allTables?: TableEntry[];
   hasData?: boolean;
+  hasLock?: boolean;
 };
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -37,442 +35,152 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+function PushPage({ allTables = [], hasData = false, hasLock = false }: PushPageProps) {
+  const { dataflowId, datasetId } = useAuth();
+  const { connection } = useSignalR();
+  const push = useWorkflowProgress('push');
 
-function PushPage({ allTables = [], hasData = false }: PushPageProps) {
+  const [zipLoading, setZipLoading] = useState(false);
+  const [zipError, setZipError] = useState<string | null>(null);
 
-  // ── Push API key ──────────────────────────────────────────────────────────
-  const [pushApiKey, setPushApiKey] = useState(() => localStorage.getItem('rn3_push_apikey') || '');
-
-  // ── Generate from current data ────────────────────────────────────────────
-  const [genLoading, setGenLoading] = useState(false);
-  const [genStatusMessage, setGenStatusMessage] = useState('');
-  const [genResult, setGenResult] = useState<{ jobId?: number | string; jobStatus: string } | null>(null);
-  const [genError, setGenError] = useState<string | null>(null);
-  const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null);
-  const [buildLog, setBuildLog] = useState<BuildProgress[]>([]);
-
+  // ── Download ZIP locally (no network, keeps lock) ─────────────────────────
   const handleDownloadZip = async () => {
-    setGenLoading(true);
-    setGenError(null);
-    setBuildProgress(null);
-    setBuildLog([]);
-    setGenStatusMessage('Fetching schema…');
+    setZipLoading(true);
+    setZipError(null);
     try {
-      const blob = await buildZip(allTables, (p) => {
-        setBuildProgress(p);
-        setBuildLog(prev => [...prev, p]);
-        setGenStatusMessage(`${p.tableIndex}/${p.totalTables} — ${p.tableName} (${p.columnCount} cols, ${p.recordCount} records)`);
-      });
-      setGenStatusMessage('ZIP ready.');
+      const zip = new JSZip();
+      for (const table of allTables) {
+        if (!table.records.length) continue;
+        const flat = table.records.map(flattenRecord);
+        const csv = recordsToCsv(flat, table.fieldNames);
+        zip.file(`${table.name}.csv`, csv);
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(blob, 'data_export.zip');
     } catch (err: any) {
-      setGenError(err?.message ?? 'Failed to generate ZIP');
+      setZipError(err?.message ?? 'Failed to build ZIP');
     } finally {
-      setGenLoading(false);
-      setGenStatusMessage('');
-      setBuildProgress(null);
+      setZipLoading(false);
     }
   };
 
-  const handleGenerateAndImport = async () => {
-    const datasetId = Number(localStorage.getItem('rn3_datasetid'));
-    const dataflowId = Number(localStorage.getItem('rn3_dataflowid'));
-
-    if (!datasetId || !dataflowId) {
-      setGenError('Dataset ID or Dataflow ID not set. Please connect first using the Connection button.');
+  // ── Push via BFF ──────────────────────────────────────────────────────────
+  const handlePush = async () => {
+    if (!connection?.connectionId) {
       return;
     }
+    push.reset();
 
-    setGenLoading(true);
-    setGenResult(null);
-    setGenError(null);
-    setBuildProgress(null);
-    setBuildLog([]);
-    setGenStatusMessage('Fetching schema…');
-
-    try {
-      const zipBlob = await buildZip(allTables, (p) => {
-        setBuildProgress(p);
-        setGenStatusMessage(`Building: ${p.tableIndex}/${p.totalTables} — ${p.tableName} (${p.columnCount} cols, ${p.recordCount} records)`);
-      });
-      const zipFile = new File([zipBlob], 'data_export.zip', { type: 'application/x-zip-compressed' });
-      const result = await uploadAndPoll(zipFile, datasetId, dataflowId, pushApiKey, setGenStatusMessage);
-      setGenResult(result);
-    } catch (err: any) {
-      setGenError(err?.message ?? 'Generate & Import failed');
-    } finally {
-      setGenLoading(false);
-      setGenStatusMessage('');
-    }
-  };
-
-  // ── Token generation ──────────────────────────────────────────────────────
-  const [tokenLoading, setTokenLoading] = useState(false);
-  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
-  const [tokenError, setTokenError] = useState<string | null>(null);
-  const [tokenCopied, setTokenCopied] = useState(false);
-
-  const handleGenerateToken = async () => {
-    setTokenLoading(true);
-    setTokenError(null);
-    setGeneratedToken(null);
-    try {
-      const username = import.meta.env.VITE_RN3_CUSTODIAN_USERNAME;
-      const password = import.meta.env.VITE_RN3_CUSTODIAN_PASSWORD;
-      const result = await rn3Api.post<string>(
-        '/user/generateToken',
-        new URLSearchParams({ username, password }),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-      );
-      const token = typeof result === 'string' ? result : (result as any)?.accessToken ?? JSON.stringify(result);
-      setGeneratedToken(token);
-    } catch (err: any) {
-      setTokenError(err?.message ?? 'Failed to generate token');
-    } finally {
-      setTokenLoading(false);
-    }
-  };
-
-  const handleCopyToken = () => {
-    if (generatedToken) {
-      navigator.clipboard.writeText(generatedToken);
-      setTokenCopied(true);
-      setTimeout(() => setTokenCopied(false), 2000);
-    }
-  };
-
-  // ── Section collapse state ────────────────────────────────────────────────
-  const [manualImportOpen, setManualImportOpen] = useState(false);
-  const [apiTokenOpen, setApiTokenOpen] = useState(false);
-
-  // ── Manual import file ────────────────────────────────────────────────────
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [importLoading, setImportLoading] = useState(false);
-  const [importStatusMessage, setImportStatusMessage] = useState('');
-  const [importResult, setImportResult] = useState<{ jobId?: number | string; jobStatus: string } | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] ?? null;
-    setSelectedFile(file);
-    setImportResult(null);
-    setImportError(null);
-    setImportStatusMessage('');
-  };
-
-  const handleImport = async () => {
-    if (!selectedFile) return;
-
-    const datasetId = Number(localStorage.getItem('rn3_datasetid'));
-    const dataflowId = Number(localStorage.getItem('rn3_dataflowid'));
-
-    if (!datasetId || !dataflowId) {
-      setImportError('Dataset ID or Dataflow ID not set. Please connect first using the Connection button.');
-      return;
+    // Flatten records into { tableName → flatRecords[] }
+    const tables: Record<string, Record<string, unknown>[]> = {};
+    for (const table of allTables) {
+      if (table.records.length) {
+        tables[table.name] = table.records.map(flattenRecord);
+      }
     }
 
-    setImportLoading(true);
-    setImportResult(null);
-    setImportError(null);
-
-    try {
-      const result = await uploadAndPoll(selectedFile, datasetId, dataflowId, pushApiKey, setImportStatusMessage);
-      setImportResult(result);
-    } catch (err: any) {
-      setImportError(err?.message ?? 'Import request failed');
-    } finally {
-      setImportLoading(false);
-      setImportStatusMessage('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+    await fetch(`${API}/api/${dataflowId}/${datasetId}/push`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionId: connection.connectionId, tables }),
+    });
+    // Progress + result delivered via SignalR
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  const jobAlert = (result: { jobId?: number | string; jobStatus: string } | null) =>
-    result ? (
-      <Alert
-        severity={result.jobStatus === 'FINISHED' || result.jobStatus === 'ACCEPTED' ? 'success' : 'warning'}
-        sx={{ mt: 2 }}
-      >
-        <Typography variant="body2" fontWeight="bold" gutterBottom>
-          {result.jobStatus === 'FINISHED' ? 'Import completed' : `Import job: ${result.jobStatus}`}
-        </Typography>
-        {result.jobId !== undefined && (
-          <Typography variant="body2">Job ID: <strong>{result.jobId}</strong></Typography>
-        )}
-      </Alert>
-    ) : null;
+  // On push success, clear IndexedDB (lock was released by BFF)
+  const datasetKey = `${dataflowId}:${datasetId}`;
+  if (push.status === 'done') {
+    clearDataset(datasetKey);
+  }
 
   return (
     <>
-      <Box
-        sx={{
-          px: { xs: 2, md: 3 },
-          pt: { xs: 2, md: 3 },
-          pb: 2,
-          borderBottom: '1px solid',
-          borderColor: 'divider',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
-          textAlign: 'left',
-          width: '100%',
-        }}
-      >
-        <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0 }}>
+      <Box sx={{ px: { xs: 2, md: 3 }, pt: { xs: 2, md: 3 }, pb: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0 }}>
           <FileUploadOutlinedIcon /> Push
         </Typography>
-        <Typography variant="body2" sx={{ color: 'text.secondary', textAlign: 'left', width: '100%' }}>
-          Push data to ReportNet.
+        <Typography variant="body2" color="text.secondary">
+          Push data back to ReportNet.
         </Typography>
       </Box>
 
       <Stack spacing={3} sx={{ px: { xs: 2, md: 3 }, py: { xs: 2, md: 3 }, alignItems: 'flex-start' }}>
 
-        {/* ── API key for push ── */}
-        <Box sx={{ width: '100%' }}>
-          <TextField
-            label="API Key"
-            value={pushApiKey}
-            onChange={e => {
-              const val = e.target.value;
-              setPushApiKey(val);
-              localStorage.setItem('rn3_push_apikey', val);
-            }}
-            size="small"
-            fullWidth
-            placeholder="Paste your API key here"
-            InputProps={{
-              startAdornment: <InputAdornment position="start">ApiKey</InputAdornment>,
-            }}
-          />
-        </Box>
+        {!hasData && (
+          <Alert severity="info">No data loaded. Pull first to load a dataset.</Alert>
+        )}
 
-        <Divider sx={{ width: '100%' }} />
+        {hasData && !hasLock && (
+          <Alert severity="warning">
+            You do not hold the lock for this dataset. Pull with the lock to enable push.
+          </Alert>
+        )}
 
-        {/* ── Generate & push from current data ── */}
-        <Box sx={{ width: '100%' }}>
-          <Typography variant="subtitle1" fontWeight="medium" gutterBottom>
-            Push Current Data
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Generate a ZIP from the currently loaded (and edited) dataset and upload it directly to ReportNet.
-          </Typography>
-
-          {hasData ? (
-            <>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
-                <Button
-                  variant="contained"
-                  onClick={handleDownloadZip}
-                  disabled={genLoading}
-                  startIcon={<FolderZipOutlinedIcon />}
-                >
-                  Download ZIP
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handleGenerateAndImport}
-                  disabled={genLoading}
-                  startIcon={genLoading ? undefined : <FileUploadOutlinedIcon />}
-                >
-                  {genLoading
-                    ? (genStatusMessage.startsWith('Waiting') || genStatusMessage.startsWith('Job') ? 'Polling…' : 'Generating…')
-                    : 'Generate ZIP & Push'}
-                </Button>
-              </Stack>
-
-              {genLoading && (
-                <Box sx={{ mt: 1 }}>
-                  <SmartProgressBar
-                    active
-                    stepKey={genStatusMessage.startsWith('Waiting') || genStatusMessage.startsWith('Job') || genStatusMessage.startsWith('Uploading') || genStatusMessage.startsWith('Generating auth') ? 'push-upload-poll' : 'push-build-zip'}
-                    externalProgress={buildProgress ? Math.round((buildProgress.tableIndex / buildProgress.totalTables) * 100) : undefined}
-                    meta={{ tableCount: allTables.length, environment: import.meta.env.VITE_RN3_API_URL || '' }}
-                    label="Push Dataset"
-                    message={genStatusMessage}
-                  />
-                </Box>
-              )}
-
-              {/* Build log — table-by-table list */}
-              {buildLog.length > 0 && (
-                <Box sx={{ mt: 2 }}>
-                  <Typography variant="body2" fontWeight="medium" sx={{ mb: 1 }}>
-                    {buildLog.length === buildLog[buildLog.length - 1]?.totalTables
-                      ? `ZIP built — ${buildLog.length} tables`
-                      : `Building… ${buildLog.length}/${buildLog[0]?.totalTables ?? '?'} tables`}
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {buildLog.map((p) => (
-                      <Chip
-                        key={p.tableName}
-                        label={`${p.tableIndex}. ${p.tableName} (${p.columnCount} cols, ${p.recordCount} rec)`}
-                        size="small"
-                        variant="outlined"
-                        color={p.recordCount > 0 ? 'success' : 'warning'}
-                      />
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              {genError && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                  <Typography variant="body2"><strong>Error:</strong> {genError}</Typography>
-                </Alert>
-              )}
-
-              {!genLoading && jobAlert(genResult)}
-            </>
-          ) : (
-            <Alert severity="info">
-              No data loaded yet. Use the <strong>Pull</strong> page to load data from ReportNet first.
-            </Alert>
-          )}
-        </Box>
-
-        <Divider sx={{ width: '100%' }} />
-
-        {/* ── Manual import file ── */}
-        <Box sx={{ width: '100%' }}>
-          <Box
-            onClick={() => setManualImportOpen(o => !o)}
-            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
-          >
-            <Typography variant="subtitle1" fontWeight="medium">Manual Import File</Typography>
-            {manualImportOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+        {/* ── Download ZIP (local, always available when data is loaded) ── */}
+        {hasData && (
+          <Box sx={{ width: '100%' }}>
+            <Typography variant="subtitle1" fontWeight="medium" gutterBottom>
+              Download ZIP
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Build and download a pipe-delimited ZIP of CSVs from the current dataset (no upload).
+            </Typography>
+            <Button
+              variant="outlined"
+              onClick={handleDownloadZip}
+              disabled={zipLoading}
+              startIcon={<FolderZipOutlinedIcon />}
+            >
+              {zipLoading ? 'Building…' : 'Download ZIP'}
+            </Button>
+            {zipError && <Alert severity="error" sx={{ mt: 1 }}>{zipError}</Alert>}
           </Box>
-          <Collapse in={manualImportOpen}>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
-              Upload a ZIP file manually to <code>/dataset/v2/importFileData</code> using your API key.
+        )}
+
+        {/* ── Push via BFF ── */}
+        {hasData && hasLock && (
+          <Box sx={{ width: '100%' }}>
+            <Typography variant="subtitle1" fontWeight="medium" gutterBottom>
+              Push to ReportNet
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Upload the current dataset to ReportNet. This will release your lock on success.
             </Typography>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".zip,application/zip,application/x-zip-compressed"
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
-
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Button
-                variant="outlined"
-                startIcon={<FolderZipOutlinedIcon />}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={importLoading}
-              >
-                Select ZIP file
-              </Button>
-
-              {selectedFile && (
-                <Chip
-                  label={`${selectedFile.name} (${(selectedFile.size / 1024).toFixed(1)} KB)`}
-                  size="small"
-                  variant="outlined"
-                  onDelete={() => {
-                    setSelectedFile(null);
-                    setImportResult(null);
-                    setImportError(null);
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                  }}
-                />
-              )}
-
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
               <Button
                 variant="contained"
-                onClick={handleImport}
-                disabled={!selectedFile || importLoading}
-                startIcon={importLoading ? undefined : <FileUploadOutlinedIcon />}
+                onClick={handlePush}
+                disabled={push.status === 'running' || !connection?.connectionId}
+                startIcon={<FileUploadOutlinedIcon />}
               >
-                {importLoading
-                  ? (importStatusMessage.startsWith('Waiting') || importStatusMessage.startsWith('Job') ? 'Polling…' : 'Uploading…')
-                  : selectedFile ? 'Push' : 'Import'}
+                {push.status === 'running' ? 'Pushing…' : 'Push to RN3'}
               </Button>
+              {push.status === 'running' && (
+                <Chip label={`${push.percent}%`} size="small" />
+              )}
             </Stack>
 
-            {importLoading && (
-              <Box sx={{ mt: 2 }}>
-                <SmartProgressBar
-                  active
-                  stepKey="push-import"
-                  meta={{ fileSizeKb: selectedFile ? Math.round(selectedFile.size / 1024) : 0, environment: import.meta.env.VITE_RN3_API_URL || '' }}
-                  label="Import File"
-                  message={importStatusMessage}
-                />
+            {push.status === 'running' && (
+              <Box sx={{ width: '100%', mb: 1 }}>
+                <LinearProgress variant="determinate" value={push.percent} />
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  {push.message}
+                </Typography>
               </Box>
             )}
 
-            {importError && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                <Typography variant="body2"><strong>Import Error:</strong> {importError}</Typography>
-              </Alert>
+            {push.status === 'done' && (
+              <Alert severity="success">Push complete. Lock released.</Alert>
             )}
 
-            {jobAlert(importResult)}
-          </Collapse>
-        </Box>
-
-        <Divider sx={{ width: '100%' }} />
-
-        {/* ── Generate API token ── */}
-        <Box sx={{ width: '100%' }}>
-          <Box
-            onClick={() => setApiTokenOpen(o => !o)}
-            sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}
-          >
-            <Typography variant="subtitle1" fontWeight="medium">API Token</Typography>
-            {apiTokenOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+            {push.status === 'error' && (
+              <Alert severity="error" sx={{ mt: 1 }}>{push.error}</Alert>
+            )}
           </Box>
-          <Collapse in={apiTokenOpen}>
-            <Box sx={{ mt: 1.5 }}>
-              <Button
-                variant="outlined"
-                onClick={handleGenerateToken}
-                disabled={tokenLoading}
-              >
-                {tokenLoading ? 'Generating Token…' : 'Generate API Token'}
-              </Button>
+        )}
 
-              {tokenError && (
-                <Alert severity="error" sx={{ mt: 2, py: 1 }}>
-                  <Typography variant="body2" component="div">
-                    <strong>Token Error:</strong> {tokenError}
-                  </Typography>
-                </Alert>
-              )}
-
-              {generatedToken && (
-                <Alert severity="success" sx={{ mt: 2, py: 1 }}>
-                  <Typography variant="body2" component="div" sx={{ mb: 1 }}>
-                    <strong>Generated Token:</strong>
-                  </Typography>
-                  <Box
-                    component="code"
-                    sx={{
-                      display: 'block',
-                      wordBreak: 'break-all',
-                      fontSize: '0.75rem',
-                      bgcolor: 'action.hover',
-                      p: 1,
-                      borderRadius: 1,
-                      mb: 1,
-                    }}
-                  >
-                    {generatedToken}
-                  </Box>
-                  <Button size="small" variant="outlined" onClick={handleCopyToken}>
-                    {tokenCopied ? 'Copied!' : 'Copy Token'}
-                  </Button>
-                </Alert>
-              )}
-            </Box>
-          </Collapse>
-        </Box>
       </Stack>
     </>
   );

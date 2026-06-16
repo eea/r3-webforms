@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build: api",
+      "command": "dotnet",
+      "type": "process",
+      "args": ["build", "${workspaceFolder}/apps/api", "--configuration", "Debug"],
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    },
+    {
+      "label": "watch: api",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "watch",
+        "--project", "${workspaceFolder}/apps/api",
+        "--",
+        "run",
+        "--launch-profile", "http"
+      ],
+      "problemMatcher": "$msCompile",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "dev-servers"
+      }
+    },
+    {
+      "label": "dev: pams",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "@eea/pams", "dev"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "file": 1,
+          "line": 1,
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "VITE",
+          "endsPattern": "ready in"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "dev-servers"
+      }
+    }
+  ]
+}

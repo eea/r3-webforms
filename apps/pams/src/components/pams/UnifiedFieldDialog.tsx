@@ -959,7 +959,7 @@ export default function UnifiedFieldDialog({
                 fullWidth
                 label="Number of records to create"
                 type="number"
-                value={createCount}
+                value={String(createCount)}
                 onChange={(value) => setCreateCount(Math.max(1, Math.min(100, parseInt(value) || 1)))}
                 inputProps={{ min: 1, max: 100 }}
                 helperText={`IDs will start from ${nextId}`}
@@ -973,7 +973,7 @@ export default function UnifiedFieldDialog({
                     value={cloneFromPamId}
                     label="Clone from existing PAM (optional)"
                     onChange={(e) => {
-                      const value = e.target.value;
+                      const value = e.target.value as unknown as string;
                       handleCloneFromPamChange(value === '' ? '' : Number(value));
                     }}
                   >

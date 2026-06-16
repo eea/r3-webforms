@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API (dotnet watch)",
+      "type": "coreclr",
+      "request": "attach",
+      "processName": "api",
+      "preLaunchTask": "watch: api",
+      "presentation": {
+        "hidden": false,
+        "group": "individual",
+        "order": 1
+      }
+    },
+    {
+      "name": "PAMS (Vite dev)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/apps/pams/src",
+      "preLaunchTask": "dev: pams",
+      "presentation": {
+        "hidden": false,
+        "group": "individual",
+        "order": 2
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack (API + PAMS)",
+      "configurations": ["API (dotnet watch)", "PAMS (Vite dev)"],
+      "presentation": {
+        "hidden": false,
+        "group": "",
+        "order": 1
+      },
+      "stopAll": true
+    }
+  ]
+}

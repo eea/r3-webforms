@@ -10,7 +10,11 @@
     "dev:pams": "pnpm --filter @eea/pams dev",
     "dev:fgases": "pnpm --filter @eea/fgases dev",
     "build:pams": "pnpm --filter @eea/pams build",
-    "build:fgases": "pnpm --filter @eea/fgases build"
+    "build:fgases": "pnpm --filter @eea/fgases build",
+    "generate:client": "bash scripts/generate-client.sh"
   },
-  "packageManager": "pnpm@9.0.0"
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.98.2"
+  }
 }

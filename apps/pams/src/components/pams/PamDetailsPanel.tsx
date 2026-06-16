@@ -137,15 +137,15 @@ function PamDetailsPanel({
   activeTab,
   onTabChange,
   tabDefs,
-  onStartEdit,
-  onSaveEdit,
-  onCancelEdit,
+  onStartEdit: _onStartEdit,
+  onSaveEdit: _onSaveEdit,
+  onCancelEdit: _onCancelEdit,
   onFieldChange,
   onRelatedFieldChange,
   onAddRecord,
   onDeleteRecord,
-  onOpenFindReplace,
-  onDeletePam,
+  onOpenFindReplace: _onOpenFindReplace,
+  onDeletePam: _onDeletePam,
 }: PamDetailsPanelProps) {
   // Re-evaluate validation data when cleared or updated
   const [valVersion, setValVersion] = useState(0);

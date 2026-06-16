@@ -1,15 +1,16 @@
+using Api.Services;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Api.Hubs;
 
-public class WorkflowHub(ILogger<WorkflowHub> logger) : Hub
+public class WorkflowHub(ILockService lockService, ILogger<WorkflowHub> logger) : Hub
 {
     // Client → Server: called every 60s to keep lock alive
     public async Task Heartbeat(string datasetKey)
     {
         var username = Context.GetHttpContext()?.Session.GetString("username") ?? "unknown";
         logger.LogDebug("Heartbeat from {Username} for dataset {DatasetKey}", username, datasetKey);
-        // LockService.RefreshHeartbeat will be wired here in 2.4
+        lockService.RefreshHeartbeat(datasetKey, username);
         await Task.CompletedTask;
     }
 

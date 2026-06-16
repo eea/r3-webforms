@@ -31,7 +31,7 @@ type PullPageProps = {
   datasetId: number;
   dataflowId: number;
   dataflowName?: string;
-  environment: string;
+  environment?: string;
   onExport: () => void;
   onClearCache: () => void;
 };
@@ -48,7 +48,7 @@ function PullPage({
   datasetId,
   dataflowId,
   dataflowName,
-  environment,
+  environment = 'sandbox',
   onExport,
   onClearCache,
 }: PullPageProps) {

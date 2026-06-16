@@ -1,117 +1,64 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react';
 import {
   Button, CircularProgress, Popover, Box, Typography,
-  FormControl, InputLabel, Select, MenuItem, TextField,
-  IconButton, InputAdornment,
-} from '@mui/material'
-import type { SelectChangeEvent } from '@mui/material'
-import CircleIcon from '@mui/icons-material/Circle'
-import Visibility from '@mui/icons-material/Visibility'
-import VisibilityOff from '@mui/icons-material/VisibilityOff'
-import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
-import { rn3Api } from '../services/rn3Api'
-import { useAuth } from '../contexts/AuthContext'
-import { clearValidationData } from './validation'
-import './Navbar.css'
+  TextField, IconButton, InputAdornment,
+} from '@mui/material';
+import CircleIcon from '@mui/icons-material/Circle';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOff from '@mui/icons-material/VisibilityOff';
+import { useAuth } from '../contexts/AuthContext';
+import { clearValidationData } from './validation';
+import './Navbar.css';
 
-type ConnectionStatus = 'idle' | 'checking' | 'connected' | 'error'
-
-const ENVIRONMENTS = [
-  { label: 'Sandbox', value: '/api' },
-  { label: 'Test / Pre-production', value: '/api-preprod' },
-  { label: 'Production', value: '/api-prod' },
-]
-
-const STATUS_COLOR: Record<ConnectionStatus, string> = {
+const STATUS_COLOR = {
   idle: '#888888',
-  checking: '#888888',
+  connecting: '#888888',
   connected: '#4caf50',
   error: '#f44336',
-}
+};
 
 function Navbar() {
-  const { setIsConnected } = useAuth()
-  const [status, setStatus] = useState<ConnectionStatus>('idle')
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const [environment, setEnvironment] = useState(
-    () => localStorage.getItem('rn3_env') || import.meta.env.VITE_RN3_API_URL || ENVIRONMENTS[0].value
-  )
-  const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem('rn3_apikey') || ''
-  )
-  const [dataflowId, setDataflowId] = useState(
-    () => localStorage.getItem('rn3_dataflowid') || ''
-  )
-  const [datasetId, setDatasetId] = useState(
-    () => localStorage.getItem('rn3_datasetid') || ''
-  )
-  const [submitted, setSubmitted] = useState(false)
-  const [showApiKey, setShowApiKey] = useState(false)
+  const { user, isConnected, dataflowId: savedDataflowId, datasetId: savedDatasetId, login, logout } = useAuth();
 
-  const open = Boolean(anchorEl)
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [dataflowId, setDataflowId] = useState(savedDataflowId);
+  const [datasetId, setDatasetId] = useState(savedDatasetId);
+  const [showPassword, setShowPassword] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
 
-  // Auto-connect on mount if credentials are saved in localStorage
-  useEffect(() => {
-    const savedEnv = localStorage.getItem('rn3_env')
-    const savedApiKey = localStorage.getItem('rn3_apikey')
-    const savedDataflowId = localStorage.getItem('rn3_dataflowid')
-    const savedDatasetId = localStorage.getItem('rn3_datasetid')
-
-    if (savedEnv && savedApiKey && savedDataflowId && savedDatasetId) {
-      rn3Api.configure(savedEnv, savedApiKey)
-      setStatus('checking')
-      rn3Api.checkConnection(savedDatasetId, savedDataflowId).then((ok) => {
-        setStatus(ok ? 'connected' : 'error')
-        setIsConnected(ok)
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleButtonClick = (e: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(e.currentTarget)
-  }
-
-  const handleClose = () => {
-    setAnchorEl(null)
-    setSubmitted(false)
-  }
-
-  const handleDisconnect = () => {
-    localStorage.removeItem('rn3_env')
-    localStorage.removeItem('rn3_apikey')
-    localStorage.removeItem('rn3_dataflowid')
-    localStorage.removeItem('rn3_datasetid')
-    localStorage.removeItem('rn3_etl_export_cache')
-    localStorage.removeItem('rn3_etl_export_cache_timestamp')
-    localStorage.removeItem('rn3_schema_field_names_cache')
-    clearValidationData()
-    setStatus('idle')
-    setIsConnected(false)
-    setApiKey('')
-    setDatasetId('')
-    handleClose()
-  }
+  const open = Boolean(anchorEl);
+  const status = connecting ? 'connecting' : isConnected ? 'connected' : 'idle';
 
   const handleConnect = async () => {
-    setSubmitted(true)
-    if (!dataflowId || !apiKey || !datasetId) return
-    localStorage.setItem('rn3_env', environment)
-    localStorage.setItem('rn3_apikey', apiKey)
-    localStorage.setItem('rn3_dataflowid', dataflowId)
-    localStorage.setItem('rn3_datasetid', datasetId)
-    rn3Api.configure(environment, apiKey)
-    setStatus('checking')
-    const ok = await rn3Api.checkConnection(datasetId, dataflowId)
-    setStatus(ok ? 'connected' : 'error')
-    setIsConnected(ok)
-    if (ok) handleClose()
-  }
+    setSubmitted(true);
+    if (!username || !password || !dataflowId || !datasetId) return;
+    setConnecting(true);
+    setLoginError(null);
+    try {
+      await login(username, password, dataflowId, datasetId);
+      setAnchorEl(null);
+      setSubmitted(false);
+      setPassword('');
+    } catch (err: any) {
+      setLoginError(err.message ?? 'Login failed');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    clearValidationData();
+    setAnchorEl(null);
+  };
 
   const statusLabel =
-    status === 'idle' ? 'Connection' :
-      status === 'checking' ? 'Connecting...' :
-        status === 'connected' ? 'Connected' : 'Connection failed'
+    status === 'connecting' ? 'Connecting…' :
+    isConnected ? `Connected (${user?.username})` : 'Connection';
 
   return (
     <nav className="navbar">
@@ -121,9 +68,9 @@ function Navbar() {
         <Button
           variant="outlined"
           size="small"
-          onClick={handleButtonClick}
+          onClick={e => setAnchorEl(e.currentTarget)}
           startIcon={
-            status === 'checking'
+            status === 'connecting'
               ? <CircularProgress size={12} color="inherit" />
               : <CircleIcon sx={{ fontSize: 12, color: STATUS_COLOR[status] }} />
           }
@@ -141,110 +88,96 @@ function Navbar() {
         <Popover
           open={open}
           anchorEl={anchorEl}
-          onClose={handleClose}
+          onClose={() => setAnchorEl(null)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
           transformOrigin={{ vertical: 'top', horizontal: 'right' }}
           sx={{ mt: 1 }}
         >
-          <Box sx={{ p: 2.5, width: 320, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <Typography variant="subtitle1" fontWeight={600}>
-              Connection Settings
-            </Typography>
-
-            <FormControl size="small" fullWidth>
-              <InputLabel>Environment</InputLabel>
-              <Select
-                value={environment}
-                label="Environment"
-                onChange={(e: SelectChangeEvent) => setEnvironment(e.target.value)}
-              >
-                {ENVIRONMENTS.map(env => (
-                  <MenuItem key={env.value} value={env.value}>{env.label}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <TextField
-              label="API Key"
-              type={showApiKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              size="small"
-              fullWidth
-              placeholder="Enter your API key"
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowApiKey(prev => !prev)}
-                      edge="end"
-                    >
-                      {showApiKey ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <TextField
-              label="Dataflow ID"
-              type="number"
-              value={dataflowId}
-              onChange={e => setDataflowId(e.target.value)}
-              size="small"
-              fullWidth
-              required
-              error={submitted && !dataflowId}
-              helperText={submitted && !dataflowId ? 'Dataflow ID is required' : ''}
-            />
-
-            <TextField
-              label="Dataset ID"
-              type="number"
-              value={datasetId}
-              onChange={e => setDatasetId(e.target.value)}
-              size="small"
-              fullWidth
-              required
-              error={submitted && !datasetId}
-              helperText={submitted && !datasetId ? 'Dataset ID is required' : ''}
-            />
-
-            {status === 'error' && (
-              <Typography variant="caption" color="error">
-                Connection failed. Check your settings and try again.
-              </Typography>
-            )}
-
-            <Button
-              variant="contained"
-              onClick={handleConnect}
-              disabled={status === 'checking' || !dataflowId || !apiKey || !datasetId}
-              startIcon={status === 'checking' ? <CircularProgress size={14} color="inherit" /> : null}
-              sx={{ textTransform: 'none' }}
-            >
-              {status === 'checking' ? 'Connecting...' : 'Connect'}
-            </Button>
-
-            {status === 'connected' && (
+          <Box sx={{ p: 2.5, width: 300, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {isConnected ? (
               <>
-                <Button
-                  variant="outlined"
-                  color="error"
-                  onClick={handleDisconnect}
-                  sx={{ textTransform: 'none' }}
-                >
-                  Disconnect
+                <Typography variant="subtitle1" fontWeight={600}>
+                  Connected as {user?.username}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Dataflow {savedDataflowId} / Dataset {savedDatasetId}
+                </Typography>
+                <Button variant="outlined" color="error" onClick={handleLogout} sx={{ textTransform: 'none' }}>
+                  Logout
                 </Button>
+              </>
+            ) : (
+              <>
+                <Typography variant="subtitle1" fontWeight={600}>
+                  Sign in to Reportnet3
+                </Typography>
+
+                <TextField
+                  label="Username"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  size="small"
+                  fullWidth
+                  required
+                  error={submitted && !username}
+                  onKeyDown={e => e.key === 'Enter' && handleConnect()}
+                />
+
+                <TextField
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  size="small"
+                  fullWidth
+                  required
+                  error={submitted && !password}
+                  onKeyDown={e => e.key === 'Enter' && handleConnect()}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton size="small" onClick={() => setShowPassword(p => !p)} edge="end">
+                          {showPassword ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+
+                <TextField
+                  label="Dataflow ID"
+                  type="number"
+                  value={dataflowId}
+                  onChange={e => setDataflowId(e.target.value)}
+                  size="small"
+                  fullWidth
+                  required
+                  error={submitted && !dataflowId}
+                />
+
+                <TextField
+                  label="Dataset ID"
+                  type="number"
+                  value={datasetId}
+                  onChange={e => setDatasetId(e.target.value)}
+                  size="small"
+                  fullWidth
+                  required
+                  error={submitted && !datasetId}
+                />
+
+                {loginError && (
+                  <Typography variant="caption" color="error">{loginError}</Typography>
+                )}
+
                 <Button
-                  variant="outlined"
-                  color="warning"
-                  startIcon={<DeleteSweepIcon />}
-                  onClick={clearValidationData}
+                  variant="contained"
+                  onClick={handleConnect}
+                  disabled={connecting}
+                  startIcon={connecting ? <CircularProgress size={14} color="inherit" /> : null}
                   sx={{ textTransform: 'none' }}
                 >
-                  Clear Validation Data
+                  {connecting ? 'Signing in…' : 'Sign in'}
                 </Button>
               </>
             )}
@@ -252,7 +185,7 @@ function Navbar() {
         </Popover>
       </div>
     </nav>
-  )
+  );
 }
 
-export default Navbar
+export default Navbar;
